@@ -1,0 +1,82 @@
+#!/bin/perl
+############################################################
+### Required python 2.7 to run count_bam.py
+
+use warnings;
+#use strict;
+
+if (@ARGV != 2) {
+	die "need to provide 3 input:Bed file, INDEXED BAM alignment file and output file name\n";
+}
+my ($inputfile, $bamfile) = ($ARGV[0], $ARGV[1]);
+my $mapped=0;
+
+my ($type,$flagstat)=(split/\//,$bamfile)[4,6];
+#print "$type\t$flagstat\n";
+#die 
+
+#$flagstat=~s/\.bam/\.flagstat/;
+my $name=$flagstat;
+$name=~s/\.bam//;
+$flagstat="/home/jgong/gongj_snoRNA/depth/".$type."-".$flagstat."\.flagstat";
+$outputfile="/extraspace/zzhang9/tRNAzzzc/RPKM3/".$type."-".$name;
+
+open ( F, "<", $flagstat) or die "can not open $flagstat\n";;
+while (<F>) {
+	chomp;
+	$lines++;
+	if ($lines==3){
+		$mapped=(split/\+/,$_)[0];
+		# print "$ARGV[0]\t$mapped\n";
+	}
+	    
+}
+
+
+open (my $INPUT , "<", $inputfile) or die "error opening inputfile: $!\n";
+open (my $OUTPUT, ">", $outputfile);
+print $OUTPUT "Sample\tGene\tChromosome\tStart\tEnd\tReads\tMappable_reads\tGene_length\tRPKM\tRPM\n";
+
+while (<$INPUT>) { #READ bed files FLT1Y-SEQ3	chr3	+	46182466	46185325	46182466	46185325	0.97
+	chomp;
+	my @fields = split;
+	my $length=0;
+	my $TEMPNAME = join '', $outputfile,'_tmp';
+	my $bamposition=$fields[0].":".$fields[1]."-".$fields[2];
+	$bamposition=~s/chr//;
+	my $start=$fields[1];
+	my $end=$fields[2];
+	# my $bamposition = $fields[0];
+	# my $pos =(split/:/,$bamposition)[1];
+	# my $start=(split/-/,$pos)[0];
+	# my $end=(split/-/,$pos)[1];
+	   $length=$end-$start+1;
+	my $count =0;
+	#system("/RIS/HPC_apps/AMD/python/python-2.7.2/bin/python /scratch/bcb/lhan1/scratch/Program/Pseudo_script/count_bam.py $bamfile $bamposition > $TEMPNAME"); #GET READS THAT SPAN A SPECIFIC SITE IN A NEW SAM FILE
+	# system("module load Python/2.7.6-anaconda");
+	# system("module load python/2.7.1");
+	system("python /home/jgong/gongj_snoRNA/count_bam.py $bamfile $bamposition > $TEMPNAME"); #GET READS THAT SPAN A SPECIFIC SITE IN A NEW SAM FILE
+ 
+
+	open(my $TMPFILE, "<", $TEMPNAME);
+	while (<$TMPFILE>) { #READ IN SAM FILE WITH CHOSEN READS
+		chomp;
+		# $_ =~ /^(\S+)/;
+		# if (!exists($ID{$1})) { 
+			$count++;
+		# }
+	}
+	
+	my $rpkm=sprintf "%.2f",1000000*1000*$count/$mapped/$length;
+	my $rpm=sprintf "%.2f",1000000*$count/$mapped;
+	
+	print $OUTPUT "$fields[3]\t$fields[0]\t$fields[1]\t$fields[2]\t$count\t$mapped\t$length\t$rpkm\t$rpm\n"; 	
+
+	system("rm $TEMPNAME");
+	
+}
+
+# system("gzip $MULTIPLEID");
+# system("rm $SORT");
+close $INPUT;	
+close $OUTPUT;
