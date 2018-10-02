@@ -1,0 +1,405 @@
+library(gdata)
+library(survival)
+
+my.fig <- "05-Survival"
+if(!file.exists(my.fig)){
+	        dir.create(my.fig)
+}
+
+args<-commandArgs(TRUE)
+file<-args[1]
+
+#my.fig <- "02-TumorNormal"
+#load("DataSpace/NormalData.RData")
+ # filename <- "BRCA_snoRNA_miRNAseq_rpkm.txt"
+
+                data <- read.table(file, header=T, row.names=1)
+                colnames(data) <- gsub("\\.", "-", colnames(data))
+
+
+
+				                                Cond <- toupper(gsub(".expression.matrix", "", file))
+				 Cond <- toupper(gsub("TRNA.", "", Cond))
+
+				                                 data <- as.matrix(data)
+				                  #######  1
+				                   mode(data) <- "numeric"
+								                 tt <- apply(data, 1, mean)
+								                  data <- data[tt >=1,]
+								   ######  find data that are mean >=1
+								             data <- log2(data +1 )
+
+											    temp <- substr(colnames(data), 14, 15)
+											                    Tumor <- data[, which(temp=="01") ]
+ # Normal<-data[,which(temp=="11") ]
+#												colnames(Normal)<-substr(colnames(Normal),1,12)
+												     colnames(Tumor)<-substr(colnames(Tumor),1,12)
+
+	TumorDataAll <- Tumor
+	FullData <- TumorDataAll
+
+
+	nameused <- paste( Cond, "_clinical_clean.txt", sep ="")
+
+		nameused <- paste(toupper(Cond), "_clinical_clean.txt", sep ="")
+		nn1 <- 20
+		nn2 <- 20 ########## unique values
+		##########          check if file exists
+		  if (file.exists(file.path("//extraspace/TCGA/TCGA_clinical", nameused)) )
+
+		
+		{
+
+data <- read.table(file.path("//extraspace/TCGA/TCGA_clinical", nameused), sep ="\t", header=TRUE, comment.char="", quote="", fill=TRUE)
+
+			normal1 <- as.vector(data[,1])
+			length(normal1)
+			length(unique(normal1))
+			
+			commonsample <- intersect(colnames(FullData), normal1)
+			length(commonsample)
+			
+			TumorData <- FullData[,match(commonsample, colnames(FullData))]
+			data <- data[match(commonsample, normal1),]
+			if(identical(colnames(TumorData), as.vector(data[,1])))
+			{
+			#############     survival output, set unique
+			
+				Result <- matrix(NA, dim(TumorData)[1], 8, byrow=TRUE)
+				colnames(Result) <- c("coef", "Exp(coef)", "Coxp", "KMp", "N", "low", "high", "Diff")
+				rownames(Result) <- rownames(TumorData)
+				for(i1 in 1:dim(TumorData)[1])
+				{
+				useddata <- as.vector(t(t(TumorData[i1,])))
+				keeplink <- which(!is.na(data[,"os_status"]) & !is.na(data[,"os_days"]) & (data[,"os_days"]) >= 0 & !is.na(useddata))
+				Time.dfs <- as.numeric(as.vector(data[keeplink,"os_days"]))/30
+				cen.status <- ifelse(as.vector(data[keeplink,"os_status"]) == "Dead", 1,0)
+
+				dataused <-  useddata[keeplink]
+			
+				if(length(dataused) >= nn1 & length(unique(dataused)) >= nn2 )
+				{
+	
+					Result[i1, "N"] <- length(dataused)
+					test.data1 <- list(time     = Time.dfs,
+					                   status   = cen.status,
+							   group    = dataused)
+					
+					tempresult<-try(model1 <- coxph(Surv(time, status) ~ group, data=test.data1, na.action=na.exclude),silent=TRUE)
+					if(length(grep("error",tempresult))==0 &  length(grep("Error",tempresult))==0)
+					{
+						Result[i1, c("coef", "Exp(coef)", "Coxp")] <- summary(model1)$coefficients[1,c("coef", "exp(coef)", "Pr(>|z|)" )]
+					
+					
+						cutgroup <- ifelse(as.vector(dataused) <= median(as.vector(dataused)), "Low","High")
+						if(length(unique(cutgroup)) >1)
+						{
+						test.data1 <- list(time     = Time.dfs,
+						                   status   = cen.status,
+								   group    = as.factor(cutgroup))
+						
+						model1 <- survdiff(Surv(time, status) ~ cutgroup, data=test.data1, na.action=na.exclude)
+						
+						Result[i1, c("KMp")] <- 1-pchisq(model1$chisq, df=length(levels(factor(cutgroup)))-1)
+						Result[i1, "low"] <- mean(dataused[cutgroup == "Low"])
+						Result[i1, "high"] <- mean(dataused[cutgroup == "High"])
+						Result[i1, "Diff"] <- mean(dataused[cutgroup == "High"]) - mean(dataused[cutgroup == "Low"])
+						}
+					}
+			
+
+						
+				}######### end of if each marker has at least 20 no NA samples and at least 20 unique values
+			
+				} #######  end of all the markers
+	
+				pvalue <- Result[,"Coxp"]
+				FDR <- p.adjust(pvalue, method="fdr")
+				Meandiff <- Result[, "Diff"]
+				Fold <- sign(Meandiff)*2^(abs(Meandiff))
+				Result <- Result <- cbind(Marker = rownames(Result),Result, Fold, FDR)
+				nameused <- paste(Cond, "-Survival-Result.txt", sep = "")
+				write.table(Result, file =file.path(my.fig,nameused), sep="\t", quote=FALSE, row.names=FALSE)
+				if(sum(!is.na(pvalue) & pvalue < 0.05) > 0)
+				{
+
+						pdf(file.path(my.fig, paste("Survival-all-",Cond,".pdf", sep ="")))
+
+						for(i1 in order(pvalue))	
+						{
+							if(!is.na(pvalue[i1]) & pvalue[i1] < 0.05)
+							{
+
+				
+								useddata <- as.vector(t(t(TumorData[i1,])))
+								keeplink <- which(!is.na(data[,"os_status"]) & !is.na(data[,"os_days"]) & (data[,"os_days"]) >= 0 & !is.na(useddata))
+								Time.dfs <- as.numeric(as.vector(data[keeplink,"os_days"]))/30
+								cen.status <- ifelse(as.vector(data[keeplink,"os_status"]) == "Dead", 1,0)
+				
+								dataused <-  useddata[keeplink]
+								cutgroup <- ifelse(as.vector(dataused) <= median(as.vector(dataused)), "Low","High")
+								test.data1 <- list(time     = Time.dfs,
+							                   status   = cen.status,
+									   group    = as.factor(cutgroup))
+						
+								model1 <- survdiff(Surv(time, status) ~ cutgroup, data=test.data1, na.action=na.exclude)
+						
+								fit1 <- survfit(Surv(time, status) ~ cutgroup, data=test.data1,
+								                type="kaplan-meier", conf.type="none", na.action=na.exclude)
+								
+								plot(fit1,  xlab="Months", col=c("red", "blue"),mark.time=TRUE, 
+								    ylab="Probability of survival",   main=paste(rownames(Result)[i1],", Cox P: " , format.pval(pvalue[i1], 3), sep = ""))
+								
+								legend("bottomleft",
+								       legend= paste(attributes(as.factor(cutgroup))$levels, ", N: ", model1$n, sep = ""),
+								     title= paste("KM P value =", round(1-pchisq(model1$chisq, df=length(levels(factor(cutgroup)))-1), digit=4)),
+								        col=c("red", "blue"),  cex=0.8, lty=1, bty="n")
+				
+								
+
+							} ##############  end of check whether the p value < 0.05
+						
+						} ############# end of all the sno RNA
+						dev.off()
+					
+				} ###########  exist p value < 0.05 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+						keeplink <- which(!is.na(pvalue) & FDR < 0.05 & !is.na(Fold) & abs(Fold) >=2)
+
+						if(length(keeplink) > 0)
+						{
+						
+							nameused <-  paste("Survival-all-",Cond,"-Sig.txt", sep ="")
+							if(length(keeplink) == 1)
+							{
+								write.table(data.frame(t(Result[keeplink,])), file =file.path(my.fig, nameused), sep="\t", quote=FALSE, row.names=FALSE)
+							}else{
+
+								write.table(Result[keeplink,], file =file.path(my.fig, nameused), sep="\t", quote=FALSE, row.names=FALSE)
+							}				
+							pdf(file.path(my.fig, paste("Survival-all-",Cond,"-Sig.pdf", sep ="")))
+
+							listused <- keeplink[order(pvalue[keeplink])]
+							for(i1 in listused)	
+							{
+
+				
+								useddata <- as.vector(t(t(TumorData[i1,])))
+								keeplink <- which(!is.na(data[,"os_status"]) & !is.na(data[,"os_days"]) & (data[,"os_days"]) >= 0 & !is.na(useddata))
+								Time.dfs <- as.numeric(as.vector(data[keeplink,"os_days"]))/30
+								cen.status <- ifelse(as.vector(data[keeplink,"os_status"]) == "Dead", 1,0)
+				
+								dataused <-  useddata[keeplink]
+								cutgroup <- ifelse(as.vector(dataused) <= median(as.vector(dataused)), "Low","High")
+								test.data1 <- list(time     = Time.dfs,
+							                   status   = cen.status,
+									   group    = as.factor(cutgroup))
+						
+								model1 <- survdiff(Surv(time, status) ~ cutgroup, data=test.data1, na.action=na.exclude)
+						
+								fit1 <- survfit(Surv(time, status) ~ cutgroup, data=test.data1,
+								                type="kaplan-meier", conf.type="none", na.action=na.exclude)
+								
+								plot(fit1,  xlab="Months", col=c("red", "blue"), mark.time=TRUE,
+								    ylab="Probability of survival",   main=paste(rownames(Result)[i1],", Cox P: " , format.pval(pvalue[i1], 3), sep = ""))
+								
+								legend("bottomleft",
+								       legend= paste(attributes(as.factor(cutgroup))$levels, ", N: ", model1$n, sep = ""),
+								     title= paste("KM P value =", round(1-pchisq(model1$chisq, df=length(levels(factor(cutgroup)))-1), digit=4)),
+								        col=c("red", "blue"),  cex=0.8, lty=1, bty="n")
+				
+								
+
+							
+						
+							} ############# end of all the sno RNA
+						dev.off()
+					
+					} ###########  exist p value < 0.05 
+
+
+
+
+
+				Result <- matrix(NA, dim(TumorData)[1], 8, byrow=TRUE)
+				colnames(Result) <- c("coef", "Exp(coef)", "Coxp", "KMp", "N", "low", "high", "Diff")
+				rownames(Result) <- rownames(TumorData)
+				for(i1 in 1:dim(TumorData)[1])
+				{
+				useddata <- as.vector(t(t(TumorData[i1,])))
+				keeplink <- which(!is.na(data[,"os_status"]) & !is.na(data[,"os_days"]) & (data[,"os_days"]) >= 0 & !is.na(useddata))
+				Time.dfs <- as.numeric(as.vector(data[keeplink,"os_days"]))/30
+				cen.status <- ifelse(as.vector(data[keeplink,"os_status"]) == "Dead" & Time.dfs <= 60, 1,0)
+				Time.dfs[which(Time.dfs >60)] <- 60
+
+				dataused <-  useddata[keeplink]
+			
+				if(length(dataused) >= nn1 & length(unique(dataused)) >= nn2 )
+				{
+	
+					Result[i1, "N"] <- length(dataused)
+					test.data1 <- list(time     = Time.dfs,
+					                   status   = cen.status,
+							   group    = dataused)
+					
+					tempresult<-try(model1 <- coxph(Surv(time, status) ~ group, data=test.data1, na.action=na.exclude),silent=TRUE)
+					if(length(grep("error",tempresult))==0 &  length(grep("Error",tempresult))==0)
+					{
+						Result[i1, c("coef", "Exp(coef)", "Coxp")] <- summary(model1)$coefficients[1,c("coef", "exp(coef)", "Pr(>|z|)" )]
+					
+					
+						cutgroup <- ifelse(as.vector(dataused) <= median(as.vector(dataused)), "Low","High")
+						if(length(unique(cutgroup)) >1)
+						{
+						test.data1 <- list(time     = Time.dfs,
+						                   status   = cen.status,
+								   group    = as.factor(cutgroup))
+						
+						model1 <- survdiff(Surv(time, status) ~ cutgroup, data=test.data1, na.action=na.exclude)
+						
+						Result[i1, c("KMp")] <- 1-pchisq(model1$chisq, df=length(levels(factor(cutgroup)))-1)
+						Result[i1, "low"] <- mean(dataused[cutgroup == "Low"])
+						Result[i1, "high"] <- mean(dataused[cutgroup == "High"])
+						Result[i1, "Diff"] <- mean(dataused[cutgroup == "High"]) - mean(dataused[cutgroup == "Low"])
+						}
+					}
+			
+
+						
+				}######### end of if each marker has at least 20 no NA samples and at least 20 unique values
+			
+				} #######  end of all the markers
+	
+				pvalue <- Result[,"Coxp"]
+				FDR <- p.adjust(pvalue, method="fdr")
+				Meandiff <- Result[, "Diff"]
+				Fold <- sign(Meandiff)*2^(abs(Meandiff))
+				Result <- Result <- cbind(Marker = rownames(Result),Result, Fold, FDR)
+				nameused <- paste(Cond, "-Survival-Result-5year.txt", sep = "")
+				write.table(Result, file =file.path(my.fig,nameused), sep="\t", quote=FALSE, row.names=FALSE)
+				if(sum(!is.na(pvalue) & pvalue < 0.05) > 0)
+				{
+
+						pdf(file.path(my.fig, paste("Survival-5year-",Cond,".pdf", sep ="")))
+
+						for(i1 in order(pvalue))	
+						{
+							if(!is.na(pvalue[i1]) & pvalue[i1] < 0.05)
+							{
+
+				
+								useddata <- as.vector(t(t(TumorData[i1,])))
+								keeplink <- which(!is.na(data[,"os_status"]) & !is.na(data[,"os_days"]) & (data[,"os_days"]) >= 0 & !is.na(useddata))
+								Time.dfs <- as.numeric(as.vector(data[keeplink,"os_days"]))/30
+								cen.status <- ifelse(as.vector(data[keeplink,"os_status"]) == "Dead" & Time.dfs <= 60, 1,0)
+								Time.dfs[which(Time.dfs >60)] <- 60				
+								dataused <-  useddata[keeplink]
+								cutgroup <- ifelse(as.vector(dataused) <= median(as.vector(dataused)), "Low","High")
+								test.data1 <- list(time     = Time.dfs,
+							                   status   = cen.status,
+									   group    = as.factor(cutgroup))
+						
+								model1 <- survdiff(Surv(time, status) ~ cutgroup, data=test.data1, na.action=na.exclude)
+						
+								fit1 <- survfit(Surv(time, status) ~ cutgroup, data=test.data1,
+								                type="kaplan-meier", conf.type="none", na.action=na.exclude)
+								
+								plot(fit1,  xlab="Months", col=c("red", "blue"),mark.time=TRUE,
+								    ylab="Probability of survival",   main=paste(rownames(Result)[i1],", Cox P: " , format.pval(pvalue[i1], 3), sep = ""))
+								
+								legend("bottomleft",
+								       legend= paste(attributes(as.factor(cutgroup))$levels, ", N: ", model1$n, sep = ""),
+								     title= paste("KM P value =", round(1-pchisq(model1$chisq, df=length(levels(factor(cutgroup)))-1), digit=4)),
+								        col=c("red", "blue"),  cex=0.8, lty=1, bty="n")
+				
+								
+
+							} ##############  end of check whether the p value < 0.05
+						
+						} ############# end of all the sno RNA
+						dev.off()
+					
+				} ###########  exist p value < 0.05 
+
+
+
+
+
+						keeplink <- which(!is.na(pvalue) & FDR < 0.05 & !is.na(Fold) & abs(Fold) >=2)
+
+						if(length(keeplink) > 0)
+						{
+						
+						
+							nameused <-  paste("Survival-5year-",Cond,"-Sig.txt", sep ="")
+							if(length(keeplink) == 1)
+							{
+								write.table(data.frame(t(Result[keeplink,])), file =file.path(my.fig, nameused), sep="\t", quote=FALSE, row.names=FALSE)
+							}else{
+
+								write.table(Result[keeplink,], file =file.path(my.fig, nameused), sep="\t", quote=FALSE, row.names=FALSE)
+							}				
+							pdf(file.path(my.fig, paste("Survival-5year-",Cond,"-Sig.pdf", sep ="")))
+
+							listused <- keeplink[order(pvalue[keeplink])]
+							for(i1 in listused)	
+							{
+
+
+				
+								useddata <- as.vector(t(t(TumorData[i1,])))
+								keeplink <- which(!is.na(data[,"os_status"]) & !is.na(data[,"os_days"]) & (data[,"os_days"]) >= 0 & !is.na(useddata))
+								Time.dfs <- as.numeric(as.vector(data[keeplink,"os_days"]))/30
+								cen.status <- ifelse(as.vector(data[keeplink,"os_status"]) == "Dead", 1,0)
+				
+								dataused <-  useddata[keeplink]
+								cutgroup <- ifelse(as.vector(dataused) <= median(as.vector(dataused)), "Low","High")
+								test.data1 <- list(time     = Time.dfs,
+							                   status   = cen.status,
+									   group    = as.factor(cutgroup))
+						
+								model1 <- survdiff(Surv(time, status) ~ cutgroup, data=test.data1, na.action=na.exclude)
+						
+								fit1 <- survfit(Surv(time, status) ~ cutgroup, data=test.data1,
+								                type="kaplan-meier", conf.type="none", na.action=na.exclude)
+								
+								plot(fit1,  xlab="Months", col=c("red", "blue"),mark.time=TRUE,
+								    ylab="Probability of survival",   main=paste(rownames(Result)[i1],", Cox P: " , format.pval(pvalue[i1], 3), sep = ""))
+								
+								legend("bottomleft",
+								       legend= paste(attributes(as.factor(cutgroup))$levels, ", N: ", model1$n, sep = ""),
+								     title= paste("KM P value =", round(1-pchisq(model1$chisq, df=length(levels(factor(cutgroup)))-1), digit=4)),
+								        col=c("red", "blue"),  cex=0.8, lty=1, bty="n")
+				
+								
+
+						
+							} ############# end of all the sno RNA
+							dev.off()
+					
+						} ###########  exist p value < 0.05 
+
+
+
+
+			}
+		} ############# end of existing clinical file
+
+
+
+
+
+
