@@ -1,0 +1,177 @@
+my.fig <- "02-TumorNormal"
+if(!file.exists(my.fig)){
+	        dir.create(my.fig)
+}
+
+args<-commandArgs(TRUE)
+file<-args[1]
+
+     data <- read.table(file, header=T, row.names=1)
+     colnames(data) <- gsub("\\.", "-", colnames(data))
+     Cond <- toupper(gsub(".expression.matrix", "", file))
+
+ 
+             data <- as.matrix(data)
+
+               mode(data) <- "numeric"
+	 tt <- apply(data, 1, mean)
+             data <- data[tt >=1,]
+	                #######  find data that are mean >=1
+              data <- log2(data +1 )
+
+   temp <- substr(colnames(data), 14, 15)
+                   Tumor <- data[, which(temp=="01") ]
+   Normal<-data[,which(temp=="11") ]
+
+
+colnames(Normal)<-substr(colnames(Normal),1,12)
+						  colnames(Tumor)<-substr(colnames(Tumor),1,12)
+
+	tumor1 <- colnames(Tumor)
+	normal1 <- colnames(Normal)			
+	commonsample <- intersect(unique(tumor1), unique(normal1))
+	TumorDataAll <- Tumor[,match(commonsample, tumor1)]
+	NormalDataAll <- Normal[,match(commonsample, normal1)]
+
+
+	if(identical(colnames(TumorDataAll), colnames(NormalDataAll)) & identical(rownames(TumorDataAll), rownames(NormalDataAll)))
+	{
+
+		pvalue <- rep(NA, dim(TumorDataAll)[1])
+		Meandiff <- rep(NA, dim(TumorDataAll)[1])
+		Mediandiff <- rep(NA, dim(TumorDataAll)[1])
+		tumor <- rep(NA, dim(TumorDataAll)[1])
+		normal <- rep(NA, dim(TumorDataAll)[1])
+
+		for(i1 in 1:dim(TumorDataAll)[1])
+		{
+			tmptumor <- as.vector(t(TumorDataAll[i1,]))
+			tmpnormal <- as.vector(t(NormalDataAll[i1,]))
+
+
+			tempresult<-try(fit1<-t.test(tmptumor, 
+					tmpnormal, paired=TRUE),silent=TRUE)
+					
+			if(length(grep("error",tempresult))==0 &  length(grep("Error",tempresult))==0)
+			{
+					
+					pvalue[i1] <- tempresult$p.value
+			}
+					
+			Meandiff[i1] <- mean(tmptumor) - mean(tmpnormal)
+			Mediandiff[i1] <- median(tmptumor) - median(tmpnormal)
+				
+			tumor[i1] <- mean(tmptumor)
+			normal[i1] <- mean(tmpnormal)
+
+
+		} ######### end of all the snoRNA
+
+		Fold <- sign(Meandiff)*2^(abs(Meandiff))
+		FDR <- p.adjust(pvalue, method="fdr")
+
+		Result <- cbind(Marker = rownames(TumorDataAll), Meandiff,Mediandiff, pvalue, FDR,Fold, 
+						tumor, normal)
+		nameused <- paste(Cond, "-Tumor-Vs-Normal", "-Paired-Result.txt", sep = "")
+		write.table(Result,   file =file.path(my.fig, nameused),  sep="\t", quote=FALSE, row.names=FALSE)
+
+
+		########  begin to draw the dot plot
+
+		nameused <- paste(Cond, "-Tumor-Vs-Normal", "-Paired-plot-1.pdf", sep = "")
+		if(sum(!is.na(pvalue) & pvalue < 0.05) > 0)
+		{
+  pdf(file=file.path(my.fig, nameused))
+  
+		for(i1 in order(pvalue))	
+		{
+			if(!is.na(pvalue[i1]) & pvalue[i1] < 0.05)
+			{
+				TumorData <- as.vector(t(TumorDataAll[i1,]))
+				NormalData <- as.vector(t(NormalDataAll[i1,]))
+				minvalue <- min(c(TumorData, NormalData))
+				maxvalue <- max(c(TumorData, NormalData))
+				tp <- format.pval(pvalue[i1], 3)
+				boxplot(TumorData, at =1, xlim =c(0.5, 2.5), 
+									ylim=c(minvalue, maxvalue), outline=F, ylab = "Expression Level", 
+									main=paste(rownames(TumorDataAll)[i1], ", P: ", tp, 
+											", Fold: ", round(Fold[i1], 3), sep =""), col="red")
+				tmp <- as.vector(t(TumorData))
+				tmp2 <- jitter(rep(1, length(tmp)), factor =4)
+				points(tmp2, tmp, pch =16, cex = 1)
+						
+						
+				boxplot(NormalData, at =2, outline=F, add=TRUE, col ="blue")
+				tmp <- NormalData
+						
+				points((tmp2+1), tmp, pch =16, cex = 1)
+						
+				for(i1 in 1:length(tmp2))
+				{
+					lines(c(tmp2[i1], tmp2[i1]+1), c(TumorData[i1], NormalData[i1]), lty =2)
+				}
+						
+				axis(side=1, at=c(1:2), c("Tumor", "Normal"))
+			} ##############  end of check whether the p value < 0.05
+
+		} ############# end of all the sno RNA
+
+		dev.off()
+		} ############# end of check whether there are p < 0.05 and draw the dot plot
+
+
+
+
+		keeplink <- which(!is.na(pvalue) & FDR < 0.05 & !is.na(Fold) & abs(Fold) >=2)
+		if(length(keeplink) > 0)
+		{
+
+
+		
+		nameused <- paste(Cond, "-Tumor-Vs-Normal", "-Paired-Result-sig.txt", sep = "")
+	#	write.table(Result[keeplink,], file =nameused, sep="\t", quote=FALSE, row.names=FALSE)
+     write.table(Result[keeplink,], file =file.path(my.fig, nameused), sep="\t", quote=FALSE, row.names=FALSE)
+
+		nameused <- paste(Cond, "-Tumor-Vs-Normal", "-Paired-plot-sig.pdf", sep = "")
+  pdf(file=file.path(my.fig, nameused))
+
+#		pdf(file=nameused)
+		listused <- keeplink[order(pvalue[keeplink])]
+		for(i1 in listused)	
+		{
+			
+				TumorData <- as.vector(t(TumorDataAll[i1,]))
+				NormalData <- as.vector(t(NormalDataAll[i1,]))
+				minvalue <- min(c(TumorData, NormalData))
+				maxvalue <- max(c(TumorData, NormalData))
+				tp <- format.pval(pvalue[i1], 3)
+				boxplot(TumorData, at =1, xlim =c(0.5, 2.5), 
+									ylim=c(minvalue, maxvalue), outline=F, ylab = "Expression Level", 
+									main=paste(rownames(TumorDataAll)[i1], ", P: ", tp, 
+											", Fold: ", round(Fold[i1], 3), sep =""), col="red")
+				tmp <- as.vector(t(TumorData))
+				tmp2 <- jitter(rep(1, length(tmp)), factor =4)
+				points(tmp2, tmp, pch =16, cex = 1)
+						
+						
+				boxplot(NormalData, at =2, outline=F, add=TRUE, col ="blue")
+				tmp <- NormalData
+						
+				points((tmp2+1), tmp, pch =16, cex = 1)
+						
+				for(i1 in 1:length(tmp2))
+				{
+					lines(c(tmp2[i1], tmp2[i1]+1), c(TumorData[i1], NormalData[i1]), lty =2)
+				}
+						
+				axis(side=1, at=c(1:2), c("Tumor", "Normal"))
+			
+
+		} ############# end of all the sno RNA
+
+		dev.off()
+		} ############# end of check whether there are p < 0.05 and draw the dot plot
+
+
+	} ############ check whether matched samples
+
