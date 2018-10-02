@@ -1,0 +1,36 @@
+#! /usr/bin/perl
+use strict;
+open (IN,"</extraspace/jgong/tRNA/UCSC_tRNA_human_tRNA_genes")||die;
+my %hash;
+open (OUT, ">/extraspace/zzhang9/tRNAzzzc/UCSC_tRNA_human_tRNA_genes.fa");
+while (<IN>){
+	chomp $_;
+	if ($_=~ /^chr/){
+		my @str = split /\t/,$_;
+		my $value = "$str[0]\t$str[1]\t$str[2]\t$str[4]";
+		#$value =~ s/chr//;
+		$hash{$str[3]}=$value;
+	}
+}
+open (GM,"/extraspace/zzhang9/m1Aprediction/hg19/hg19.fasta");
+$/= ">";
+my %genome;
+while (<GM>){
+	chomp $_;
+	$_=~ s/>//;
+	my @str = split /\n/,$_;
+	my $id = shift @str;
+	my $seq = join "",@str;
+	$genome{$id}=$seq
+}
+foreach my $key  (sort keys %hash){
+	my $index = $hash{$key};
+	my @str = split /\t/,$index;
+	my $seq = substr ($genome{$str[0]},$str[1]-1,$str[2]-$str[1]+1);
+	$seq =~ tr /atcg/ATCG/;
+	if ($index =~ /\-/){
+		$seq = reverse($seq);
+		$seq =~ tr /ATCGatcg/TAGCTAGC/
+	}
+	print OUT ">$key\n$seq\n";
+}
